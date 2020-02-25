@@ -7,7 +7,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
-import org.sireum.hamr.inspector.common.ArchDiscovery;
+import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.common.ArtUtils;
 import org.sireum.hamr.inspector.common.Msg;
 import org.sireum.hamr.inspector.services.MsgService;
@@ -37,7 +37,7 @@ public class MsgServiceRedis implements MsgService {
     public static final Duration POLL_TIMEOUT = Duration.ofSeconds(2);
 
     private final SessionService sessionService;
-    private final ArchDiscovery archDiscovery;
+    private final InspectionBlueprint inspectionBlueprint;
     private final ArtUtils artUtils;
 
     private final ReactiveRedisTemplate<String, String> template;
@@ -59,10 +59,10 @@ public class MsgServiceRedis implements MsgService {
      */
     private StreamReceiver<String, MapRecord<String, String, String>> streamReceiver;
 
-    public MsgServiceRedis(ReactiveRedisTemplate<String, String> template, SessionService sessionService, ArchDiscovery archDiscovery, ArtUtils artUtils) {
+    public MsgServiceRedis(ReactiveRedisTemplate<String, String> template, SessionService sessionService, InspectionBlueprint inspectionBlueprint, ArtUtils artUtils) {
         this.template = template;
         this.sessionService = sessionService;
-        this.archDiscovery = archDiscovery;
+        this.inspectionBlueprint = inspectionBlueprint;
         this.artUtils = artUtils;
     }
 
@@ -146,7 +146,7 @@ public class MsgServiceRedis implements MsgService {
                 }
 
                 final String data = it.getOrDefault("data", "");
-                final DataContent dataContent = parseCache.get(data, json -> archDiscovery.deserializeFn().apply(json));
+                final DataContent dataContent = parseCache.get(data, json -> inspectionBlueprint.deserializeFn().apply(json));
                 if (dataContent == null) {
                     log.error("Unable to parse data content of msg id={} data={}.", id, it);
                     return INVALID_MSG;
