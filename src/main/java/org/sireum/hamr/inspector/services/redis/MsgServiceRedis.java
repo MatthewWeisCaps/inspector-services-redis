@@ -146,7 +146,7 @@ public class MsgServiceRedis implements MsgService {
                 }
 
                 final String data = it.getOrDefault("data", "");
-                final DataContent dataContent = parseCache.get(data, json -> inspectionBlueprint.deserializeFn().apply(json));
+                final DataContent dataContent = parseCache.get(data, json -> inspectionBlueprint.deserializer().apply(json));
                 if (dataContent == null) {
                     log.error("Unable to parse data content of msg id={} data={}.", id, it);
                     return INVALID_MSG;

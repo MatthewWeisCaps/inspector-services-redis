@@ -27,7 +27,7 @@ public class InjectionServiceRedis implements InjectionService {
         final int bridgeId = injection.bridge().id().toInt();
         final int portId = injection.port().id().toInt();
 
-        final String dataContentString = inspectionBlueprint.serializeFn().apply(injection.dataContent());
+        final String dataContentString = inspectionBlueprint.serializer().apply(injection.dataContent());
 
         final String key = String.format("%s-pubsub", session);
         final String message = String.format("%d,%d,%s", bridgeId, portId, dataContentString);
