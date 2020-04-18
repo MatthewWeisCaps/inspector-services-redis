@@ -1,3 +1,28 @@
+/*
+ * Copyright (c) 2020, Matthew Weis, Kansas State University
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 package org.sireum.hamr.inspector.services.redis;
 
 import art.DataContent;
@@ -7,8 +32,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
-import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.common.ArtUtils;
+import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.common.Msg;
 import org.sireum.hamr.inspector.services.MsgService;
 import org.sireum.hamr.inspector.services.Session;
@@ -44,10 +69,9 @@ public class MsgServiceRedis implements MsgService {
 
     private ReactiveStreamOperations<String, String, String> streamOps;
 
-
     final Cache<String, DataContent> parseCache = Caffeine.newBuilder()
-            .<String, DataContent>weigher((key, value) -> Math.max(key.length(), 1))
-            .maximumWeight(16384)
+            .<String, DataContent>weigher((key, value) -> approxMinMemUsageBytes(key))
+            .maximumWeight(64_000_000) // ~ 0.064 GB
             .expireAfterAccess(Duration.ofMinutes(5))
             .build();
 
@@ -81,21 +105,21 @@ public class MsgServiceRedis implements MsgService {
     public @NotNull Flux<Msg> replayThenLive(@NotNull Session session) {
         return sessionService.startTimeOf(session).flatMapMany(startTime ->
                 streamReceiver.receive(StreamOffset.fromStart(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session.getName(), flux)));
+                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
     }
 
     @Override
     public @NotNull Flux<Msg> replay(@NotNull Session session) {
         return sessionService.startTimeOf(session).flatMapMany(startTime ->
                 streamOps.read(StreamOffset.fromStart(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session.getName(), flux)));
+                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
     }
 
     @Override
     public @NotNull Flux<Msg> live(@NotNull Session session) {
         return sessionService.startTimeOf(session).flatMapMany(startTime ->
                 streamReceiver.receive(StreamOffset.latest(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session.getName(), flux)));
+                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
     }
 
     @Override
@@ -103,7 +127,7 @@ public class MsgServiceRedis implements MsgService {
         return streamOps.size(session.getName() + "-stream");
     }
 
-    private Flux<Msg> RECORD_TRANSFORMER(long startTime, String key, Flux<MapRecord<String, String, String>> flux) {
+    private Flux<Msg> RECORD_TRANSFORMER(long startTime, Session session, Flux<MapRecord<String, String, String>> flux) {
         return flux.map(Record::getValue)
                 // if the message contains a "stop" key then it is a special indicator that the session
                 // has stopped. This message will contain a "stop" field with a reason string and a "timestamp"
@@ -111,7 +135,7 @@ public class MsgServiceRedis implements MsgService {
                 .index().map(indexedValue -> {
             final long id = indexedValue.getT1();
 
-            final Msg cachedMsg = ServiceCaches.get(key, id);
+            final Msg cachedMsg = ServiceCaches.get(session, id);
             if (cachedMsg != null) {
                 return cachedMsg;
             }
@@ -153,7 +177,7 @@ public class MsgServiceRedis implements MsgService {
                 }
 
                 final Msg msg = new Msg(src, dst, artUtils.getBridge(src), artUtils.getBridge(dst), dataContent, ts, id);
-                ServiceCaches.put(key, id, msg);
+                ServiceCaches.put(session, id, msg);
                 return msg;
 
             } catch (NumberFormatException | NoSuchElementException e) {
@@ -162,6 +186,16 @@ public class MsgServiceRedis implements MsgService {
 
             return INVALID_MSG;
         }).filter(msg -> msg != INVALID_MSG);
+    }
+
+
+    /*
+     * There are many exceptions, but this approximates string size.
+     */
+    private static int approxMinMemUsageBytes(String string) {
+        // formula from:
+        // https://www.javamex.com/tutorials/memory/string_memory_usage.shtml
+        return 8 * (((2 * string.length()) + 35) / 8);
     }
 
 }
