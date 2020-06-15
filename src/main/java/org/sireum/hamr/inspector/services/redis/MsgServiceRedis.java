@@ -36,10 +36,13 @@ import org.sireum.hamr.inspector.common.ArtUtils;
 import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.common.Msg;
 import org.sireum.hamr.inspector.services.MsgService;
+import org.sireum.hamr.inspector.services.RecordId;
 import org.sireum.hamr.inspector.services.Session;
 import org.sireum.hamr.inspector.services.SessionService;
+import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.Record;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
@@ -52,6 +55,8 @@ import reactor.core.publisher.Mono;
 import javax.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.NoSuchElementException;
+
+import static org.springframework.data.domain.Range.Bound.*;
 
 @Slf4j
 @Controller
@@ -71,7 +76,7 @@ public class MsgServiceRedis implements MsgService {
 
     final Cache<String, DataContent> parseCache = Caffeine.newBuilder()
             .<String, DataContent>weigher((key, value) -> approxMinMemUsageBytes(key))
-            .maximumWeight(64_000_000) // ~ 0.064 GB
+            .maximumWeight(64_000_000) // ~ 0.064 GB // todo add to properties or better yet delegate to spring cache..
             .expireAfterAccess(Duration.ofMinutes(5))
             .build();
 
@@ -102,24 +107,35 @@ public class MsgServiceRedis implements MsgService {
     }
 
     @Override
-    public @NotNull Flux<Msg> replayThenLive(@NotNull Session session) {
-        return sessionService.startTimeOf(session).flatMapMany(startTime ->
-                streamReceiver.receive(StreamOffset.fromStart(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
+    public @NotNull Flux<Msg> live(@NotNull Session session, @NotNull Range<RecordId> range) {
+        if (range.getUpperBound().isBounded()) {
+            return streamOps.range(session.getName() + "-stream", format(range))
+                    .transform(flux -> RECORD_TRANSFORMER(session, flux));
+        } else {
+            if (range.getLowerBound().isBounded()) {
+                final ReadOffset readOffset = range.getLowerBound().getValue()
+                        .map(lower -> ReadOffset.from(format(lower))).get();
+
+                return streamReceiver.receive(StreamOffset.create(session.getName() + "-stream", readOffset))
+                        .transform(flux -> RECORD_TRANSFORMER(session, flux));
+            } else {
+                return streamReceiver.receive(StreamOffset.fromStart(session.getName() + "-stream"))
+                        .transform(flux -> RECORD_TRANSFORMER(session, flux));
+            }
+        }
     }
 
     @Override
-    public @NotNull Flux<Msg> replay(@NotNull Session session) {
-        return sessionService.startTimeOf(session).flatMapMany(startTime ->
-                streamOps.read(StreamOffset.fromStart(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
+    public @NotNull Flux<Msg> replay(@NotNull Session session, @NotNull Range<RecordId> range) {
+        return streamOps.range(session.getName() + "-stream", format(range))
+                .transform(flux -> RECORD_TRANSFORMER(session, flux));
     }
 
+    // todo change docs to only support this method for existent parts of streams (even if hot)
     @Override
-    public @NotNull Flux<Msg> live(@NotNull Session session) {
-        return sessionService.startTimeOf(session).flatMapMany(startTime ->
-                streamReceiver.receive(StreamOffset.latest(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
+    public @NotNull Flux<Msg> replayReverse(@NotNull Session session, @NotNull Range<RecordId> range) {
+        return streamOps.reverseRange(session.getName() + "-stream", format(range))
+                .transform(flux -> RECORD_TRANSFORMER(session, flux));
     }
 
     @Override
@@ -127,8 +143,9 @@ public class MsgServiceRedis implements MsgService {
         return streamOps.size(session.getName() + "-stream");
     }
 
-    private Flux<Msg> RECORD_TRANSFORMER(long startTime, Session session, Flux<MapRecord<String, String, String>> flux) {
-        return flux.map(Record::getValue)
+    private Flux<Msg> RECORD_TRANSFORMER(Session session, Flux<MapRecord<String, String, String>> flux) {
+        return flux
+                .map(Record::getValue)
                 // if the message contains a "stop" key then it is a special indicator that the session
                 // has stopped. This message will contain a "stop" field with a reason string and a "timestamp"
                 .takeWhile(value -> value.get("stop") == null)
@@ -144,9 +161,7 @@ public class MsgServiceRedis implements MsgService {
                 final var it = indexedValue.getT2();
 
                 long ts = Long.parseLong(it.getOrDefault("timestamp", "-1"));
-                if (ts != -1) {
-                    ts -= startTime;
-                } else {
+                if (ts == -1) {
                     log.error("Unable to parse timestamp of msg id={} data={}.", id, it);
                     return INVALID_MSG;
                 }
@@ -188,6 +203,38 @@ public class MsgServiceRedis implements MsgService {
         }).filter(msg -> msg != INVALID_MSG);
     }
 
+    /**
+     * Convert a generic spring {@link Range} of {@link RecordId}s into a redis-friendly String format.
+     *
+     * @param range the {@link Range} of {@link RecordId}s to convert
+     * @return the resulting redis-friendly {@link Range} of Strings
+     */
+    private static Range<String> format(@NotNull Range<RecordId> range) {
+        return Range.of(format(range.getLowerBound()), format(range.getUpperBound()));
+    }
+
+    /**
+     * Converts a generic spring {@link org.springframework.data.domain.Range.Bound} of {@link RecordId} into a
+     * redis-friendly {@link org.springframework.data.domain.Range.Bound} of Strings.
+     *
+     * @param bound the {@link RecordId}-containing {@link org.springframework.data.domain.Range.Bound} to convert
+     * @return a String-containing {@link org.springframework.data.domain.Range.Bound} in a redis-friendly format
+     */
+    private static Range.Bound<String> format(@NotNull Range.Bound<RecordId> bound) {
+        return bound.getValue()
+                .map(recordId -> bound.isInclusive() ? inclusive(format(recordId)) : exclusive(format(recordId)))
+                .orElse(unbounded());
+    }
+
+    /**
+     * Formats a generic spring data {@link RecordId} into a redis-friendly string format.
+     *
+     * @param recordId the {@link RecordId} to covert
+     * @return a redis-friendly string representation of the recordId
+     */
+    private static String format(@NotNull RecordId recordId) {
+        return recordId.timestamp() + "-" + recordId.sequence();
+    }
 
     /*
      * There are many exceptions, but this approximates string size.
