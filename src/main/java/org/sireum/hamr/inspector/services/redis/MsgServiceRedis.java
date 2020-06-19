@@ -109,33 +109,37 @@ public class MsgServiceRedis implements MsgService {
     @Override
     public @NotNull Flux<Msg> live(@NotNull Session session, @NotNull Range<RecordId> range) {
         if (range.getUpperBound().isBounded()) {
-            return streamOps.range(session.getName() + "-stream", format(range))
-                    .transform(flux -> RECORD_TRANSFORMER(session, flux));
+            return sessionService.startTimeOf(session).flatMapMany(startTime ->
+                    streamOps.range(session.getName() + "-stream", format(range))
+                    .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
         } else {
             if (range.getLowerBound().isBounded()) {
                 final ReadOffset readOffset = range.getLowerBound().getValue()
                         .map(lower -> ReadOffset.from(format(lower))).get();
 
-                return streamReceiver.receive(StreamOffset.create(session.getName() + "-stream", readOffset))
-                        .transform(flux -> RECORD_TRANSFORMER(session, flux));
+                return sessionService.startTimeOf(session).flatMapMany(startTime ->
+                        streamReceiver.receive(StreamOffset.create(session.getName() + "-stream", readOffset))
+                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
             } else {
-                return streamReceiver.receive(StreamOffset.fromStart(session.getName() + "-stream"))
-                        .transform(flux -> RECORD_TRANSFORMER(session, flux));
+                return sessionService.startTimeOf(session).flatMapMany(startTime ->
+                        streamReceiver.receive(StreamOffset.fromStart(session.getName() + "-stream"))
+                        .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
             }
         }
     }
 
     @Override
     public @NotNull Flux<Msg> replay(@NotNull Session session, @NotNull Range<RecordId> range) {
-        return streamOps.range(session.getName() + "-stream", format(range))
-                .transform(flux -> RECORD_TRANSFORMER(session, flux));
+        return sessionService.startTimeOf(session).flatMapMany(startTime ->
+            streamOps.range(session.getName() + "-stream", format(range))
+                .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
     }
 
-    // todo change docs to only support this method for existent parts of streams (even if hot)
     @Override
     public @NotNull Flux<Msg> replayReverse(@NotNull Session session, @NotNull Range<RecordId> range) {
-        return streamOps.reverseRange(session.getName() + "-stream", format(range))
-                .transform(flux -> RECORD_TRANSFORMER(session, flux));
+        return sessionService.startTimeOf(session).flatMapMany(startTime ->
+            streamOps.reverseRange(session.getName() + "-stream", format(range))
+                .transform(flux -> RECORD_TRANSFORMER(startTime, session, flux)));
     }
 
     @Override
@@ -143,7 +147,7 @@ public class MsgServiceRedis implements MsgService {
         return streamOps.size(session.getName() + "-stream");
     }
 
-    private Flux<Msg> RECORD_TRANSFORMER(Session session, Flux<MapRecord<String, String, String>> flux) {
+    private Flux<Msg> RECORD_TRANSFORMER(long startTime, Session session, Flux<MapRecord<String, String, String>> flux) {
         return flux
                 .map(Record::getValue)
                 // if the message contains a "stop" key then it is a special indicator that the session
@@ -161,7 +165,9 @@ public class MsgServiceRedis implements MsgService {
                 final var it = indexedValue.getT2();
 
                 long ts = Long.parseLong(it.getOrDefault("timestamp", "-1"));
-                if (ts == -1) {
+                if (ts != -1) {
+                    ts -= startTime;
+                } else {
                     log.error("Unable to parse timestamp of msg id={} data={}.", id, it);
                     return INVALID_MSG;
                 }

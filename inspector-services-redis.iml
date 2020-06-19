@@ -45,8 +45,11 @@
     <orderEntry type="library" name="Maven: org.sireum.slang-embedded-art:slang-embedded-art_2.12:260fd0d" level="project" />
     <orderEntry type="library" name="Maven: org.sireum.slang-embedded-art:slang-embedded-art-shared_2.12:260fd0d" level="project" />
     <orderEntry type="library" name="Maven: org.sireum.hamr:inspector-stream:0.5-SNAPSHOT" level="project" />
-    <orderEntry type="library" name="Maven: io.projectreactor:reactor-core:3.3.2.RELEASE" level="project" />
+    <orderEntry type="library" name="Maven: org.sireum.hooks:virtual-reactor-hooks:0.1-SNAPSHOT" level="project" />
     <orderEntry type="library" name="Maven: org.reactivestreams:reactive-streams:1.0.3" level="project" />
+    <orderEntry type="library" name="Maven: org.aspectj:aspectjrt:1.9.5" level="project" />
+    <orderEntry type="library" name="Maven: org.jetbrains.kotlin:kotlin-stdlib:1.3.61" level="project" />
+    <orderEntry type="library" name="Maven: org.jetbrains.kotlin:kotlin-stdlib-common:1.3.61" level="project" />
     <orderEntry type="library" name="Maven: org.jetbrains:annotations:17.0.0" level="project" />
     <orderEntry type="library" name="Maven: org.junit.jupiter:junit-jupiter-api:5.5.2" level="project" />
     <orderEntry type="library" name="Maven: org.apiguardian:apiguardian-api:1.1.0" level="project" />
