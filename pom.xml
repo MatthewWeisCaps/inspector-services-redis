@@ -7,12 +7,13 @@
     <parent>
         <groupId>org.sireum</groupId>
         <artifactId>inspector-bom</artifactId>
-        <version>0.5-SNAPSHOT</version>
+        <version>0.6-SNAPSHOT</version>
+        <relativePath>../inspector-bom</relativePath>
     </parent>
 
-    <groupId>org.sireum.hamr</groupId>
+    <groupId>org.sireum</groupId>
     <artifactId>inspector-services-redis</artifactId>
-    <version>0.5-SNAPSHOT</version>
+    <version>0.6-SNAPSHOT</version>
     <name>inspector-services-redis</name>
     <description>Redis implementation of inspector-services api</description>
 
@@ -30,6 +31,10 @@
     </repositories>
 
     <dependencies>
+        <dependency>
+            <groupId>org.sireum.kekinian</groupId>
+            <artifactId>slang-embedded-art_2.13</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>

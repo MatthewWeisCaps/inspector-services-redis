@@ -27,8 +27,8 @@ package org.sireum.hamr.inspector.services.redis;
 
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
-import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.common.Injection;
+import org.sireum.hamr.inspector.common.InspectionBlueprint;
 import org.sireum.hamr.inspector.services.InjectionService;
 import org.sireum.hamr.inspector.services.Session;
 import org.springframework.data.redis.core.StringRedisTemplate;
